@@ -1,0 +1,14 @@
+name: stock-analysis
+title: stock-analysis
+username:
+account: wilsonfreitas
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6496098
+bundleId: 6011340
+url: https://wilsonfreitas.shinyapps.io/stock-analysis/
+when: 1655319249.7373
+lastSyncTime: 1655319249.7373
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: legacy/deploy.R|legacy/flights-app.R|legacy/server.R|legacy/ui.R

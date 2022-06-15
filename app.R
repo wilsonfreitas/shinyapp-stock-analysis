@@ -1,6 +1,5 @@
 library(shiny)
 library(shinydashboard)
-
 library(stringr)
 library(lubridate)
 library(quantmod)
