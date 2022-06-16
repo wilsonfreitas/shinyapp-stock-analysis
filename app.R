@@ -285,7 +285,7 @@ cagr_stats_server <- function(id, timeseries) {
   })
 }
 
-# launcher ----
+# App ----
 
 stock_analysis_ui <- function() {
   dbHeader <- dashboardHeader(title = "Stock Analysis")
@@ -295,7 +295,7 @@ stock_analysis_ui <- function() {
     dbHeader,
     dashboardSidebar(
       sidebarMenu(
-        menuItem("Stock Analysis", tabName = "select-time-series"),
+        menuItem("Returns Analysis", tabName = "returns-analysis"),
         menuItem("Volatility", tabName = "volatility"),
         # menuItem("Risk", tabName = "risk"),
         hr(),
@@ -308,7 +308,7 @@ stock_analysis_ui <- function() {
     dashboardBody(
       tabItems(
         tabItem(
-          tabName = "select-time-series",
+          tabName = "returns-analysis",
           fluidRow(
             box(
               width = "12",
