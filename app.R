@@ -611,9 +611,7 @@ stock_analysis_app <- function() {
 
   server <- function(input, output, session) {
     timeseries <- timeseries_server("prices")
-
     validTimeSeries <- valid_series_reactive(timeseries)
-
     returnSeries <- return_series_reactive(validTimeSeries)
 
     output$stock_info <- renderUI({
@@ -635,7 +633,7 @@ stock_analysis_app <- function() {
     selectedReturnSeries <- return_series_reactive(selectedTimeSeries)
     price_stats_server("prices", validTimeSeries, selectedTimeSeries)
     price_plot_server("prices", selectedTimeSeries)
-    drawdown_plot_server("prices", returnSeries)
+    drawdown_plot_server("prices", selectedReturnSeries)
     cagr_stats_server("prices", validTimeSeries)
 
     # volatility ----
