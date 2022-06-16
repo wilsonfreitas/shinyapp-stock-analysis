@@ -7,29 +7,7 @@ library(PerformanceAnalytics)
 library(ggplot2)
 
 
-# timeseries module ----
-timeseries_ui <- function(id) {
-  fluidRow(
-    textInput(NS(id, "symbol"), "Symbol", value = "PETR4.SA"),
-  )
-}
-
-timeseries_server <- function(id) {
-  moduleServer(id, function(input, output, session) {
-    reactive({
-      series <- try(
-        getSymbols(input$symbol, auto.assign = FALSE),
-        silent = TRUE
-      )
-      validate(
-        need(series, "Please set a valid symbol")
-      )
-      attr(series, "symbol") <- input$symbol
-      series
-    })
-  })
-}
-
+# functions ----
 valid_series_reactive <- function(series) {
   reactive({
     x <- series()
@@ -55,18 +33,63 @@ calculate_returns <- function(series) {
     na.omit()
 }
 
+garch_fit_reactive <- function(series) {
+  reactive({
+    ret <- series()
+    fGarch::garchFit(
+      data = zoo::coredata(ret),
+      include.mean = FALSE,
+      trace = FALSE
+    ) |> suppressWarnings()
+  })
+}
+
+volatility_series_reactive <- function(series, garchFit) {
+  reactive({
+    ret <- series()
+    fit <- garchFit()
+    xts(fit@sigma.t, index(ret))
+  })
+}
+
+# timeseries module ----
+timeseries_ui <- function(id) {
+  fluidRow(
+    textInput(NS(id, "symbol"), "Symbol", value = "PETR4.SA"),
+  )
+}
+
+timeseries_server <- function(id) {
+  moduleServer(id, function(input, output, session) {
+    reactive({
+      series <- try(
+        getSymbols(input$symbol, auto.assign = FALSE),
+        silent = TRUE
+      )
+      validate(
+        need(series, "Please set a valid symbol")
+      )
+      attr(series, "symbol") <- input$symbol
+      series
+    })
+  })
+}
+
 # daterange module ----
-daterange_ui <- function(id) {
+daterange_ui <- function(id,
+                         selected = 3,
+                         choices = list(
+                           "YTD" = 5, "5D" = 1, "1M" = 2, "6M" = 3,
+                           "1Y" = 4, "2Y" = 7, "5Y" = 8, "MAX" = 6
+                         )) {
   fluidRow(
     column(
       6,
       radioButtons(NS(id, "choices"),
         label = "",
-        choices = list(
-          "YTD" = 5, "5D" = 1, "1M" = 2, "6M" = 3,
-          "1Y" = 4, "2Y" = 7, "5Y" = 8, "MAX" = 6
-        ),
-        selected = 3, inline = TRUE
+        choices = choices,
+        selected = selected,
+        inline = TRUE
       )
     ),
     column(6, dateRangeInput(NS(id, "daterange"), ""))
@@ -84,25 +107,25 @@ daterange_server <- function(id, timeseries) {
     })
 
     selected_daterange <- reactive({
-      ix <- zoo::index(valSeries())
+      ix <- zoo::index(timeseries())
       lx <- tail(ix, 1) # last date
       dx <- switch(input$choices,
         "1" = range(tail(ix, 5)),                      # 5D
         "2" = c(as.Date(lx - dyears(1 / 12)), lx),     # 1M
         "3" = c(as.Date(lx - dyears(0.5)), lx),        # 6M
         "4" = c(as.Date(lx - dyears(1)), lx),          # 1Y
+        "5" = c(as.Date(ISOdate(year(lx), 1, 1)), lx), # YTD
+        "6" = range(ix),                               # MAX
         "7" = c(as.Date(lx - dyears(2)), lx),          # 2Y
         "8" = c(as.Date(lx - dyears(5)), lx),          # 5Y
-        "5" = c(as.Date(ISOdate(year(lx), 1, 1)), lx), # YTD
-        "6" = range(ix)                                # MAX
+        "9" = c(as.Date(lx - dyears(3)), lx),          # 3Y
+        "10" = c(as.Date(lx - dyears(4)), lx),         # 4Y
       )
       dx
     })
 
-    valSeries <- valid_series_reactive(timeseries)
-
     reactive({
-      series <- valSeries()
+      series <- timeseries()
       dr <- input$daterange |>
         format() |>
         paste(collapse = "/")
@@ -140,7 +163,7 @@ drawdown_plot_ui <- function(id) {
   )
 }
 
-drawdown_plot_server <- function(id, series) {
+drawdown_plot_server <- function(id, returnSeries) {
   moduleServer(id, function(input, output, session) {
     output$drawdownPlot <- renderPlot({
       rets <- returnSeries()
@@ -150,8 +173,6 @@ drawdown_plot_server <- function(id, series) {
         theme_bw() +
         theme(legend.position = "none")
     })
-
-    returnSeries <- return_series_reactive(series)
   })
 }
 
@@ -199,12 +220,10 @@ price_stats_ui <- function(id) {
   )
 }
 
-price_stats_server <- function(id, timeseries, selected_timeseries) {
+price_stats_server <- function(id, validTimeSeries, selectedTimeSeries) {
   moduleServer(id, function(input, output, session) {
-    validTimeSeries <- valid_series_reactive(timeseries)
-
     output$price <- renderValueBox({
-      last_price <- selected_timeseries() |>
+      last_price <- selectedTimeSeries() |>
         tail(1) |>
         as.numeric()
 
@@ -243,7 +262,7 @@ price_stats_server <- function(id, timeseries, selected_timeseries) {
     })
 
     output$period_return <- renderValueBox({
-      x <- calculate_returns(selected_timeseries())
+      x <- calculate_returns(selectedTimeSeries())
       ret <- x |>
         sum() |>
         as.numeric()
@@ -273,15 +292,179 @@ cagr_stats_ui <- function(id) {
   )
 }
 
-cagr_stats_server <- function(id, timeseries) {
+cagr_stats_server <- function(id, validTimeSeries) {
   moduleServer(id, function(input, output, session) {
-    validTimeSeries <- valid_series_reactive(timeseries)
-
-    returnSeries <- return_series_reactive(validTimeSeries)
-
     output$return_5y <- cagr_value_box(validTimeSeries, 5) |> renderValueBox()
     output$return_10y <- cagr_value_box(validTimeSeries, 10) |> renderValueBox()
     output$return_15y <- cagr_value_box(validTimeSeries, 15) |> renderValueBox()
+  })
+}
+
+# volatility ----
+volatility_series_ui <- function(id, height = "175px") {
+  fluidRow(
+    plotOutput(NS(id, "volatility_series"), height = height)
+  )
+}
+
+volatility_series_server <- function(id, volatilityTimeSeries) {
+  moduleServer(id, function(input, output, session) {
+    output$volatility_series <- renderPlot({
+      vol <- volatilityTimeSeries()
+      colnames(vol) <- c("volatility")
+      vol <- vol * sqrt(252) * 100
+
+      vol |>
+        autoplot() |>
+        labs(y = "%")
+    })
+  })
+}
+
+volatility_parameters_ui <- function(id) {
+  fluidRow(htmlOutput(NS(id, "volatility_parameters")))
+}
+
+volatility_parameters_server <- function(id, garchFit) {
+  moduleServer(id, function(input, output, session) {
+    output$volatility_parameters <- renderUI({
+      fit <- garchFit()
+      div(
+        p("Model: GARCH(1,1)"),
+        p("omega = ", format(fit@fit$par["omega"], digits = 8, nsmall = 8)),
+        p("alpha1 = ", format(fit@fit$par["alpha1"], digits = 4, nsmall = 4)),
+        p("beta1 = ", format(fit@fit$par["beta1"], digits = 4, nsmall = 4))
+      )
+    })
+  })
+}
+
+volatility_summary_ui <- function(id) {
+  fluidRow(htmlOutput(NS(id, "volatility_summary")))
+}
+
+volatility_summary_server <- function(id, returnTimeSeries, garchFit) {
+  moduleServer(id, function(input, output, session) {
+    instantVolatility <- reactive({
+      fit <- garchFit()
+      cf_ <- fit@fit$par
+      vi <- sum(cf_ * c(1, tail(fit@data, 1)^2, tail(fit@h.t, 1)))
+      sqrt(vi)
+    })
+
+    longTermVolatility <- reactive({
+      fit <- garchFit()
+      cf_ <- fit@fit$par
+      vl <- cf_["omega"] / (1 - cf_["alpha1"] - cf_["beta1"])
+      sqrt(vl)
+    })
+
+    halfLife <- reactive({
+      fit <- garchFit()
+      cf_ <- fit@fit$par
+      log(0.5) / log(cf_["alpha1"] + cf_["beta1"])
+    })
+
+    output$volatility_summary <- renderUI({
+      sd_ <- (var(returnTimeSeries()) * 252) |> sqrt()
+      div(
+        p(
+          "Inst. vol. = ",
+          format(instantVolatility() * 100, digits = 1, nsmall = 2), "%",
+          "(", format(instantVolatility() * sqrt(252) * 100, digits = 1, nsmall = 1), "% yr", ")"
+        ),
+        p(
+          "Long term vol. = ", format(longTermVolatility() * 100, digits = 1, nsmall = 2), "%",
+          "(", format(longTermVolatility() * sqrt(252) * 100, digits = 1, nsmall = 1), "% yr", ")"
+        ),
+        p("Std. dev. = ", format(sd_ * 100, digits = 2, nsmall = 2), "% yr"),
+        p("Half-life = ", format(halfLife(), digits = 2, nsmall = 2))
+      )
+    })
+  })
+}
+
+# risk ----
+risk_parameters_ui <- function(id) {
+  fluidRow(
+    column(6, numericInput(NS(id, "conf_interval"), "Confidence interval (%)", value = 5)),
+    column(6, numericInput(NS(id, "data_window"), "Window size", value = 252))
+  )
+}
+
+risk_summary_ui <- function(id) {
+  fluidRow(htmlOutput(NS(id, "summary")))
+}
+
+risk_summary_server <- function(id, retSeries, volSeries) {
+  moduleServer(id, function(input, output, session) {
+    confInterval <- reactive({
+      1 - (input$conf_interval / 100) / 2
+    })
+
+    output$summary <- renderUI({
+      ret <- retSeries()
+      vol <- volSeries()
+      ret <- tail(retSeries(), input$data_window)
+      vol <- tail(volSeries(), input$data_window)
+
+      viol_n <- sum(abs(ret) > vol * qnorm(confInterval()))
+      viol_p <- 1 - (viol_n / input$data_window)
+      expec <- (input$conf_interval / 100) * input$data_window
+
+      div(
+        h4("V@R Backtesting"),
+        p("Expected = ", format(expec, digits = 0)),
+        p("Total = ", viol_n),
+        p("Fraction = ", format(viol_p * 100, digits = 2, nsmall = 2), "%")
+      )
+    })
+  })
+}
+
+volatility_tunnel_ui <- function(id, height = "175px") {
+  fluidRow(plotOutput(NS(id, "volatility_tunnel"), height = height))
+}
+
+volatility_tunnel_server <- function(id, returnTimeSeries, volatilityTimeSeries) {
+  moduleServer(id, function(input, output, session) {
+    confInterval <- reactive({
+      1 - (input$conf_interval / 100) / 2
+    })
+
+    output$volatility_tunnel <- renderPlot({
+      ret <- returnTimeSeries()
+      vol <- volatilityTimeSeries()
+      ic <- confInterval()
+
+      series <- merge.xts(
+        returns = ret,
+        top = vol * qnorm(ic),
+        bottom = -vol * qnorm(ic)
+      ) * 100
+
+      colnames(series) <- c("returns", "top", "bottom")
+      xdf <- as.data.frame(series)
+      xdf$refdate <- as.Date(rownames(xdf))
+      rownames(xdf) <- NULL
+      percent <- scales::label_percent()
+
+      xdf |> ggplot(aes(x = refdate, y = returns)) +
+        geom_line(colour = "grey") +
+        geom_line(aes(y = bottom), colour = "red", alpha = 0.5) +
+        geom_line(aes(y = top), colour = "red", alpha = 0.5) +
+        geom_point(
+          data = subset(xdf, returns < bottom | returns > top),
+          aes(x = refdate, y = returns),
+          shape = 4
+        ) +
+        labs(
+          x = NULL, y = "%",
+          title = str_glue("GARCH {percent(ic)} Confidence Interval"),
+          subtitle = "Cross-marks represent returns that exceed confidence interval"
+        ) +
+        theme_bw()
+    })
   })
 }
 
@@ -297,7 +480,7 @@ stock_analysis_ui <- function() {
       sidebarMenu(
         menuItem("Returns Analysis", tabName = "returns-analysis"),
         menuItem("Volatility", tabName = "volatility"),
-        # menuItem("Risk", tabName = "risk"),
+        menuItem("Risk Analysis", tabName = "risk"),
         hr(),
         timeseries_ui("prices"),
         div(
@@ -351,26 +534,19 @@ stock_analysis_ui <- function() {
               width = "12",
               status = "primary",
               solidHeader = TRUE,
-              collapsible = FALSE,
-              daterange_ui("volatility")
+              daterange_ui("volatility",
+                selected = 9,
+                choices = list(
+                  "1Y" = 4, "2Y" = 7, "3Y" = 9, "4Y" = 10, "5Y" = 8, "MAX" = 6
+                )
+              )
             ),
           ),
           fluidRow(
             box(
-              title = "Volatility time series—annual volatility",
               width = "12",
               solidHeader = TRUE,
-              collapsible = TRUE,
-              plotOutput("volatility_timeSeries", height = "175px")
-            )
-          ),
-          fluidRow(
-            box(
-              title = "Volatility tunnel—daily volatility",
-              width = "12",
-              solidHeader = TRUE,
-              collapsible = TRUE,
-              plotOutput("volatility_tunnel", height = "175px")
+              column(12, volatility_series_ui("volatility", "200px"))
             )
           ),
           fluidRow(
@@ -378,30 +554,53 @@ stock_analysis_ui <- function() {
               title = "Model parameters",
               width = 4,
               solidHeader = TRUE,
-              collapsible = TRUE,
-              htmlOutput("volatility_parameters")
+              column(12, volatility_parameters_ui("volatility"))
             ),
             box(
               title = "Volatility",
               width = 4,
               solidHeader = TRUE,
-              collapsible = TRUE,
-              htmlOutput("volatility_summary")
+              column(12, volatility_summary_ui("volatility"))
+            )
+          )
+        ),
+        tabItem(
+          tabName = "risk",
+          fluidRow(
+            box(
+              width = "12",
+              status = "primary",
+              solidHeader = TRUE,
+              daterange_ui("risk",
+                selected = 9,
+                choices = list(
+                  "1Y" = 4, "2Y" = 7, "3Y" = 9, "4Y" = 10, "5Y" = 8, "MAX" = 6
+                )
+              )
+            ),
+          ),
+          fluidRow(
+            box(
+              width = "12",
+              solidHeader = TRUE,
+              column(12, risk_parameters_ui("risk"))
+            )
+          ),
+          fluidRow(
+            box(
+              width = "12",
+              solidHeader = TRUE,
+              column(12, volatility_tunnel_ui("risk", "200px"))
+            )
+          ),
+          fluidRow(
+            box(
+              width = 4,
+              solidHeader = TRUE,
+              column(12, risk_summary_ui("risk"))
             )
           )
         )
-        # ,
-        #
-        # tabItem(
-        #   tabName = "risk",
-        #   fluidRow(
-        #     column(2,
-        #            numericInput("conf_interval", "Confidence interval (%)", value = 5),
-        #            numericInput("data_window", "Window size", value = 252)
-        #     )
-        #   ),
-        #   box(width = '100%', dygraphOutput("timeSeries", height = "175px"))
-        # )
       )
     )
   )
@@ -412,6 +611,10 @@ stock_analysis_app <- function() {
 
   server <- function(input, output, session) {
     timeseries <- timeseries_server("prices")
+
+    validTimeSeries <- valid_series_reactive(timeseries)
+
+    returnSeries <- return_series_reactive(validTimeSeries)
 
     output$stock_info <- renderUI({
       ts <- timeseries()
@@ -426,11 +629,34 @@ stock_analysis_app <- function() {
         )
       )
     })
-    selected_timeseries <- daterange_server("prices", timeseries)
-    price_stats_server("prices", timeseries, selected_timeseries)
-    price_plot_server("prices", selected_timeseries)
-    drawdown_plot_server("prices", selected_timeseries)
-    cagr_stats_server("prices", timeseries)
+
+    # price returns ----
+    selectedTimeSeries <- daterange_server("prices", validTimeSeries)
+    selectedReturnSeries <- return_series_reactive(selectedTimeSeries)
+    price_stats_server("prices", validTimeSeries, selectedTimeSeries)
+    price_plot_server("prices", selectedTimeSeries)
+    drawdown_plot_server("prices", returnSeries)
+    cagr_stats_server("prices", validTimeSeries)
+
+    # volatility ----
+    selectedTimeSeries_vol <- daterange_server("volatility", validTimeSeries)
+    selectedReturnSeries_vol <- return_series_reactive(selectedTimeSeries_vol)
+    garchFit_vol <- garch_fit_reactive(selectedReturnSeries_vol)
+    volatilityTimeSeries_vol <- volatility_series_reactive(selectedReturnSeries_vol, garchFit_vol)
+    volatility_series_server("volatility", volatilityTimeSeries_vol)
+    volatility_parameters_server("volatility", garchFit_vol)
+    volatility_summary_server("volatility", selectedReturnSeries_vol, garchFit_vol)
+
+    # risk ----
+    selectedTimeSeries_risk <- daterange_server("risk", validTimeSeries)
+    selectedReturnSeries_risk <- return_series_reactive(selectedTimeSeries_risk)
+    garchFit_risk <- garch_fit_reactive(selectedReturnSeries_risk)
+    volatilityTimeSeries_risk <- volatility_series_reactive(
+      selectedReturnSeries_risk,
+      garchFit_risk
+    )
+    volatility_tunnel_server("risk", selectedReturnSeries_risk, volatilityTimeSeries_risk)
+    risk_summary_server("risk", selectedReturnSeries_risk, volatilityTimeSeries_risk)
   }
 
   shinyApp(ui, server)
