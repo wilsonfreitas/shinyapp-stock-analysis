@@ -5,7 +5,7 @@ account: wilsonfreitas
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 6496098
-bundleId: 6015624
+bundleId: 6017304
 url: https://wilsonfreitas.shinyapps.io/stock-analysis/
-when: 1655422846.08009
-lastSyncTime: 1655422846.08009
+when: 1655474243.88515
+lastSyncTime: 1655474243.88515
