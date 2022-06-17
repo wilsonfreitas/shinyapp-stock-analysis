@@ -5,6 +5,7 @@ library(lubridate)
 library(quantmod)
 library(PerformanceAnalytics)
 library(ggplot2)
+library(rb3)
 
 
 # functions ----
@@ -71,7 +72,61 @@ timeseries_server <- function(id) {
         need(series, "Please set a valid symbol")
       )
       attr(series, "symbol") <- symbol
+      attr(series, "company_name") <- str_sub(symbol, 1, 4)
       series
+    })
+  })
+}
+
+# stock info ----
+stock_info_ui <- function(id) {
+  fluidRow(uiOutput(NS(id, "stock_info")), style = "margin-left: 5px")
+}
+
+stock_info_server <- function(id, timeseries) {
+  moduleServer(id, function(input, output, session) {
+    company_info <- reactive({
+      ts <- timeseries()
+      company_name <- attr(ts, "company_name")
+      f <- download_marketdata(
+        "GetListedSupplementCompany",
+        company_name = company_name
+      )
+      x <- try(jsonlite::fromJSON(f, simplifyDataFrame = FALSE))
+      validate(
+        need(x, "no company info")
+      )
+      x[[1]]
+    })
+
+    company_details <- reactive({
+      ci <- company_info()
+      f <- download_marketdata("GetDetailsCompany", code_cvm = ci$codeCVM)
+      x <- try(jsonlite::fromJSON(f, simplifyDataFrame = FALSE))
+      validate(
+        need(x, "no company details")
+      )
+      x
+    })
+
+    output$stock_info <- renderUI({
+      ts <- timeseries()
+      dates <- index(ts)
+      lastdate <- tail(dates, 1)
+      firstdate <- dates[1]
+      symbol <- attr(ts, "symbol")
+      ci <- company_info()
+      cd <- company_details()
+      tagList(
+        tags$h3(cd$companyName),
+        tags$p("Period:", format(firstdate), "/", format(lastdate)),
+        tags$p("# ON:", ci$numberCommonShares),
+        tags$p("# PN:", ci$numberPreferredShares),
+        do.call(
+          tags$ul,
+          str_split(cd$industryClassification, "/")[[1]] |> lapply(tags$li)
+        )
+      )
     })
   })
 }
@@ -488,7 +543,7 @@ stock_analysis_ui <- function() {
         hr(),
         timeseries_ui("prices"),
         hr(),
-        tags$div(uiOutput("stock_info"), style = "margin-left: 5px")
+        stock_info_ui("prices")
       )
     ),
     dashboardBody(
@@ -635,19 +690,9 @@ stock_analysis_app <- function() {
   server <- function(input, output, session) {
     timeseries <- timeseries_server("prices")
     validTimeSeries <- valid_series_reactive(timeseries)
-    returnSeries <- return_series_reactive(validTimeSeries)
 
-    output$stock_info <- renderUI({
-      ts <- timeseries()
-      dates <- index(ts)
-      lastdate <- tail(dates, 1)
-      firstdate <- dates[1]
-      symbol <- attr(ts, "symbol")
-      tagList(
-        tags$h1(strong(symbol)),
-        tags$p(strong("Period: "), format(firstdate), "/", format(lastdate))
-      )
-    })
+    # stock info ----
+    stock_info_server("prices", timeseries)
 
     # price returns ----
     selectedTimeSeries <- daterange_server("prices", validTimeSeries)
