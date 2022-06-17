@@ -55,21 +55,22 @@ volatility_series_reactive <- function(series, garchFit) {
 # timeseries module ----
 timeseries_ui <- function(id) {
   fluidRow(
-    textInput(NS(id, "symbol"), "Symbol", value = "PETR4.SA"),
+    textInput(NS(id, "symbol"), "Symbol", value = "LREN3.SA"),
   )
 }
 
 timeseries_server <- function(id) {
   moduleServer(id, function(input, output, session) {
     reactive({
+      symbol <- str_to_upper(input$symbol)
       series <- try(
-        getSymbols(input$symbol, auto.assign = FALSE),
+        getSymbols(symbol, auto.assign = FALSE),
         silent = TRUE
       )
       validate(
         need(series, "Please set a valid symbol")
       )
-      attr(series, "symbol") <- input$symbol
+      attr(series, "symbol") <- symbol
       series
     })
   })
@@ -177,6 +178,80 @@ drawdown_plot_server <- function(id, returnSeries) {
 }
 
 # price stats ----
+price_stats_ui <- function(id) {
+  fluidRow(
+    valueBoxOutput(NS(id, "price")),
+    valueBoxOutput(NS(id, "min_price")),
+    valueBoxOutput(NS(id, "max_price")),
+    valueBoxOutput(NS(id, "period_return")),
+  )
+}
+
+price_stats_server <- function(id, validTimeSeries, selectedTimeSeries) {
+  moduleServer(id, function(input, output, session) {
+    dollar <- scales::label_dollar()
+    percent <- scales::label_percent()
+
+    output$price <- renderValueBox({
+      ts <- selectedTimeSeries()
+      refdate <-  zoo::index(ts) |> tail(1)
+      last_price <- ts |>
+        tail(1) |>
+        as.numeric()
+
+      valueBox(
+        dollar(last_price),
+        str_glue("Last {format(refdate)}"),
+        color = "purple",
+        icon = icon("dollar-sign")
+      )
+    })
+
+    output$min_price <- renderValueBox({
+      sel_ser <- selectedTimeSeries()
+      min_idx <- sel_ser |> which.min()
+      x <- sel_ser[min_idx, ] |> as.numeric()
+      min_date <- index(sel_ser[min_idx, ])
+
+      valueBox(
+        dollar(x),
+        str_glue("Min {format(min_date)}"),
+        color = "yellow",
+        icon = icon("dollar-sign")
+      )
+    })
+
+    output$max_price <- renderValueBox({
+      sel_ser <- selectedTimeSeries()
+      max_idx <- sel_ser |> which.max()
+      x <- sel_ser[max_idx, ] |> as.numeric()
+      max_date <- index(sel_ser[max_idx, ])
+
+      valueBox(
+        dollar(x),
+        str_glue("Max {format(max_date)}"),
+        color = "yellow",
+        icon = icon("dollar-sign")
+      )
+    })
+
+    output$period_return <- renderValueBox({
+      x <- calculate_returns(selectedTimeSeries())
+      ret <- x |>
+        sum() |>
+        as.numeric()
+
+      valueBox(
+        percent(ret),
+        "Period Return",
+        color = "purple",
+        icon = icon("percent")
+      )
+    })
+  })
+}
+
+# cagr stats ----
 cagr_value_box <- function(series, n,
                            label = c("Y", "M"),
                            color = "blue") {
@@ -209,83 +284,10 @@ cagr_value_box <- function(series, n,
   )
 }
 
-price_stats_ui <- function(id) {
-  fluidRow(
-    valueBoxOutput(NS(id, "price")),
-    valueBoxOutput(NS(id, "min_price_1y")),
-    valueBoxOutput(NS(id, "max_price_1y")),
-    valueBoxOutput(NS(id, "period_return")),
-    valueBoxOutput(NS(id, "return_1m")),
-    valueBoxOutput(NS(id, "return_1y")),
-  )
-}
-
-price_stats_server <- function(id, validTimeSeries, selectedTimeSeries) {
-  moduleServer(id, function(input, output, session) {
-    output$price <- renderValueBox({
-      last_price <- selectedTimeSeries() |>
-        tail(1) |>
-        as.numeric()
-
-      valueBox(
-        last_price |> scales::label_dollar()(),
-        "Current Price",
-        color = "purple",
-        icon = icon("dollar-sign")
-      )
-    })
-
-    output$min_price_1y <- renderValueBox({
-      x <- validTimeSeries() |>
-        xts::last(252) |>
-        min()
-
-      valueBox(
-        x |> scales::label_dollar()(),
-        "Min. Price (1Y)",
-        color = "yellow",
-        icon = icon("dollar-sign")
-      )
-    })
-
-    output$max_price_1y <- renderValueBox({
-      x <- validTimeSeries() |>
-        xts::last(252) |>
-        max()
-
-      valueBox(
-        x |> scales::label_dollar()(),
-        "Max. Price (1Y)",
-        color = "yellow",
-        icon = icon("dollar-sign")
-      )
-    })
-
-    output$period_return <- renderValueBox({
-      x <- calculate_returns(selectedTimeSeries())
-      ret <- x |>
-        sum() |>
-        as.numeric()
-
-      valueBox(
-        ret |> scales::label_percent()(),
-        "Period Return",
-        color = "purple",
-        icon = icon("percent")
-      )
-    })
-
-    output$return_1m <- cagr_value_box(validTimeSeries, 1, "M") |>
-      renderValueBox()
-
-    output$return_1y <- cagr_value_box(validTimeSeries, 1) |>
-      renderValueBox()
-  })
-}
-
-# cagr stats ----
 cagr_stats_ui <- function(id) {
   fluidRow(
+    valueBoxOutput(NS(id, "return_1m")),
+    valueBoxOutput(NS(id, "return_1y")),
     valueBoxOutput(NS(id, "return_5y")),
     valueBoxOutput(NS(id, "return_10y")),
     valueBoxOutput(NS(id, "return_15y")),
@@ -294,6 +296,8 @@ cagr_stats_ui <- function(id) {
 
 cagr_stats_server <- function(id, validTimeSeries) {
   moduleServer(id, function(input, output, session) {
+    output$return_1m <- cagr_value_box(validTimeSeries, 1, "M") |> renderValueBox()
+    output$return_1y <- cagr_value_box(validTimeSeries, 1) |> renderValueBox()
     output$return_5y <- cagr_value_box(validTimeSeries, 5) |> renderValueBox()
     output$return_10y <- cagr_value_box(validTimeSeries, 10) |> renderValueBox()
     output$return_15y <- cagr_value_box(validTimeSeries, 15) |> renderValueBox()
@@ -483,15 +487,15 @@ stock_analysis_ui <- function() {
         menuItem("Risk Analysis", tabName = "risk"),
         hr(),
         timeseries_ui("prices"),
-        div(
-          style = "margin-left: 10px",
-        )
+        hr(),
+        tags$div(uiOutput("stock_info"), style = "margin-left: 5px")
       )
     ),
     dashboardBody(
       tabItems(
         tabItem(
           tabName = "returns-analysis",
+          h1("Returns Analysis"),
           fluidRow(
             box(
               width = "12",
@@ -501,9 +505,29 @@ stock_analysis_ui <- function() {
               daterange_ui("prices")
             ),
           ),
-          fluidRow(uiOutput("stock_info")),
           fluidRow(
-            column(6, price_stats_ui("prices")),
+            column(
+              6,
+              box(
+                width = "12",
+                solidHeader = TRUE,
+                status = "primary",
+                title = "Selected Period",
+                column(12, price_stats_ui("prices"))
+              )
+            ),
+            column(
+              6,
+              box(
+                width = "12",
+                solidHeader = TRUE,
+                status = "primary",
+                title = "Returns",
+                column(12, cagr_stats_ui("prices"))
+              )
+            ),
+          ),
+          fluidRow(
             column(
               6,
               box(
@@ -512,10 +536,7 @@ stock_analysis_ui <- function() {
                 status = "primary",
                 column(12, price_plot_ui("prices"))
               )
-            )
-          ),
-          fluidRow(
-            column(6, cagr_stats_ui("prices")),
+            ),
             column(
               6,
               box(
@@ -524,11 +545,12 @@ stock_analysis_ui <- function() {
                 status = "primary",
                 column(12, drawdown_plot_ui("prices"))
               )
-            )
+            ),
           )
         ),
         tabItem(
           tabName = "volatility",
+          h1("Volatility Analysis"),
           fluidRow(
             box(
               width = "12",
@@ -566,6 +588,7 @@ stock_analysis_ui <- function() {
         ),
         tabItem(
           tabName = "risk",
+          h1("Risk Analysis"),
           fluidRow(
             box(
               width = "12",
@@ -616,15 +639,13 @@ stock_analysis_app <- function() {
 
     output$stock_info <- renderUI({
       ts <- timeseries()
-      refdate <- ts |>
-        index() |>
-        tail(1)
+      dates <- index(ts)
+      lastdate <- tail(dates, 1)
+      firstdate <- dates[1]
       symbol <- attr(ts, "symbol")
       tagList(
-        tags$h1(strong(symbol), style = "margin-left: 50px"),
-        tags$p(strong("Refdate: "), format(refdate),
-          style = "margin-left: 50px"
-        )
+        tags$h1(strong(symbol)),
+        tags$p(strong("Period: "), format(firstdate), "/", format(lastdate))
       )
     })
 
