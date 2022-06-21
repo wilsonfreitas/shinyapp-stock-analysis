@@ -325,14 +325,11 @@ cagr_value_box <- function(series, n,
 
   rets <- calculate_returns(prices[rng])
 
-  x <- rets |>
-    na.omit() |>
-    sum() |>
-    as.numeric() |>
-    percent()
+  x <- sum(rets, na.rm = TRUE)
+  x <- exp(x) - 1
 
   valueBox(
-    x,
+    percent(x),
     str_glue("Return ({n}{label})"),
     color = color,
     icon = icon("percent")
